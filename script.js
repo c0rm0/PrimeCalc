@@ -6,6 +6,11 @@ const WORKER_REPORT_INTERVAL_VISIBLE_MS = 1000 / 16;
 const WORKER_REPORT_INTERVAL_HIDDEN_MS = 1000;
 const MIN_MATH_BUDGET_MS = 0.0001;
 const DEFAULT_MATH_BUDGET_MS = 1;
+const SPIN_CAT_PLAY_DURATION_MS = 3090;
+const CAT_SPAWN_INTERVAL_MS = 3000;
+const CAT_MIN_SIZE_PX = 28;
+const CAT_MAX_SIZE_PX = 90;
+const CAT_SOURCE = "spincat.gif";
 
 const integerFormatter = new Intl.NumberFormat("en-US");
 const rateFormatter = new Intl.NumberFormat("en-US", {
@@ -35,6 +40,7 @@ const elements = {
   mathVerdict: document.querySelector("#math-verdict"),
   mathLog: document.querySelector("#math-log"),
   primeLog: document.querySelector("#prime-log"),
+  catOverlay: document.querySelector("#cat-overlay"),
 };
 
 const INITIAL_MATH_TEXT = [
@@ -81,6 +87,9 @@ const state = {
 
 let pendingAnimationFrameId = 0;
 let pendingAnimationFallbackId = 0;
+let pendingCatSpawnId = 0;
+let nextFloatingCatId = 0;
+const activeCatCleanupIds = new Set();
 
 const workerSource = `
 const PRIME_RATE_WINDOW_MS = 5000;
@@ -593,6 +602,93 @@ function setText(element, value) {
   }
 }
 
+function randomBetween(min, max) {
+  return min + Math.random() * (max - min);
+}
+
+function clearCatSpawnTimer() {
+  if (pendingCatSpawnId) {
+    window.clearTimeout(pendingCatSpawnId);
+    pendingCatSpawnId = 0;
+  }
+}
+
+function clearFloatingCats() {
+  clearCatSpawnTimer();
+
+  for (const cleanupId of activeCatCleanupIds) {
+    window.clearTimeout(cleanupId);
+  }
+
+  activeCatCleanupIds.clear();
+  elements.catOverlay?.replaceChildren();
+}
+
+function getRandomCatSize() {
+  const viewportMin = Math.max(
+    240,
+    Math.min(window.innerWidth || CAT_MAX_SIZE_PX, window.innerHeight || CAT_MAX_SIZE_PX),
+  );
+  const minSize = Math.max(CAT_MIN_SIZE_PX, Math.round(viewportMin * 0.09));
+  const maxSize = Math.max(
+    minSize + 10,
+    Math.min(CAT_MAX_SIZE_PX, Math.round(viewportMin * 0.17)),
+  );
+
+  return Math.round(randomBetween(minSize, maxSize));
+}
+
+function spawnFloatingCat() {
+  if (!elements.catOverlay || document.visibilityState === "hidden") {
+    return;
+  }
+
+  const cat = document.createElement("img");
+  const size = getRandomCatSize();
+  const margin = 8;
+  const maxLeft = Math.max(margin, window.innerWidth - size - margin);
+  const maxTop = Math.max(margin, window.innerHeight - size - margin);
+  const catUrl = new URL(CAT_SOURCE, window.location.href);
+
+  nextFloatingCatId += 1;
+  catUrl.searchParams.set("spawn", String(nextFloatingCatId));
+
+  cat.src = catUrl.toString();
+  cat.alt = "";
+  cat.setAttribute("aria-hidden", "true");
+  cat.className = "floating-cat";
+  cat.decoding = "async";
+  cat.loading = "eager";
+  cat.style.width = `${size}px`;
+  cat.style.left = `${Math.round(randomBetween(margin, maxLeft))}px`;
+  cat.style.top = `${Math.round(randomBetween(margin, maxTop))}px`;
+  cat.style.setProperty("--cat-life", `${SPIN_CAT_PLAY_DURATION_MS}ms`);
+  cat.style.setProperty("--cat-drift-x", `${randomBetween(-24, 24).toFixed(1)}px`);
+  cat.style.setProperty("--cat-drift-y", `${randomBetween(-18, 18).toFixed(1)}px`);
+  elements.catOverlay.append(cat);
+
+  const cleanupId = window.setTimeout(() => {
+    activeCatCleanupIds.delete(cleanupId);
+    cat.remove();
+  }, SPIN_CAT_PLAY_DURATION_MS + 160);
+
+  activeCatCleanupIds.add(cleanupId);
+}
+
+function scheduleNextFloatingCat() {
+  clearCatSpawnTimer();
+
+  if (!elements.catOverlay || document.visibilityState === "hidden") {
+    return;
+  }
+
+  pendingCatSpawnId = window.setTimeout(() => {
+    pendingCatSpawnId = 0;
+    spawnFloatingCat();
+    scheduleNextFloatingCat();
+  }, CAT_SPAWN_INTERVAL_MS);
+}
+
 function updateOverclockButtons() {
   for (const button of elements.speedButtons) {
     const isMaxButton = button.dataset.speedMode === "max";
@@ -868,8 +964,12 @@ document.addEventListener("visibilitychange", () => {
   });
 
   if (document.visibilityState === "visible") {
+    scheduleNextFloatingCat();
     render(performance.now(), true);
+    return;
   }
+
+  clearFloatingCats();
 });
 
 window.addEventListener("resize", () => {
@@ -880,6 +980,7 @@ window.addEventListener("resize", () => {
 updateOverclockButtons();
 render(performance.now(), true);
 scheduleNextAnimationFrame();
+scheduleNextFloatingCat();
 primeWorker.postMessage({
   type: "init",
   mathBudgetMs: state.mathBudgetMs,
