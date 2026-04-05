@@ -11,11 +11,17 @@ const SAVE_FILE_FORMAT = "PrimeCalcSave";
 const SAVE_FILE_VERSION = 1;
 const EXPORT_REQUEST_TIMEOUT_MS = 15000;
 const SPIN_CAT_PLAY_DURATION_MS = 3090;
+const LIZARD_PLAY_DURATION_MS = 1680;
 const CAT_SPAWN_MIN_INTERVAL_MS = 3000;
 const CAT_SPAWN_MAX_INTERVAL_MS = 6000;
 const CAT_MIN_SIZE_PX = 28;
 const CAT_MAX_SIZE_PX = 90;
-const CAT_SOURCES = ["spincat.gif", "lizard.gif"];
+const CAT_MIN_SPEED_PX_PER_S = 24;
+const CAT_MAX_SPEED_PX_PER_S = 132;
+const CAT_SOURCES = [
+  { src: "spincat.gif", durationMs: SPIN_CAT_PLAY_DURATION_MS },
+  { src: "lizard.gif", durationMs: LIZARD_PLAY_DURATION_MS },
+];
 
 const integerFormatter = new Intl.NumberFormat("en-US");
 const rateFormatter = new Intl.NumberFormat("en-US", {
@@ -196,6 +202,42 @@ function calculateAveragePrimeGap(primeWindow) {
   return gapTotal / (primeWindow.length - 1);
 }
 
+function rebuildPrimeCache(limit) {
+  const upperLimit = Math.max(2, Math.round(Number(limit) || 2));
+
+  if (upperLimit === 2) {
+    return [2];
+  }
+
+  const oddCount = Math.floor((upperLimit - 1) / 2);
+  const composite = new Uint8Array(oddCount);
+  const maxFactorIndex = Math.floor((Math.sqrt(upperLimit) - 3) / 2);
+
+  for (let index = 0; index <= maxFactorIndex; index += 1) {
+    if (composite[index]) {
+      continue;
+    }
+
+    const prime = index * 2 + 3;
+    let compositeIndex = Math.floor((prime * prime - 3) / 2);
+
+    while (compositeIndex < oddCount) {
+      composite[compositeIndex] = 1;
+      compositeIndex += prime;
+    }
+  }
+
+  const primes = [2];
+
+  for (let index = 0; index < oddCount; index += 1) {
+    if (!composite[index]) {
+      primes.push(index * 2 + 3);
+    }
+  }
+
+  return primes;
+}
+
 function createState() {
   const now = performance.now();
 
@@ -257,8 +299,6 @@ function buildSaveData() {
     mathVerdict: state.mathVerdict,
     mathText: state.mathText,
     averagePrimeGap: state.averagePrimeGap,
-    primes: state.primes.slice(),
-    recentPrimeWindow: state.recentPrimeWindow.slice(),
     primeFeedNumbers: state.primes.slice(-MAX_PENDING_PRIMES),
     primeRateBuckets: state.primeRateBuckets.map((bucket) => ({
       ageMs: Math.max(0, now - bucket.time),
@@ -269,16 +309,28 @@ function buildSaveData() {
 
 function importState(data, reportIntervalMs) {
   const now = performance.now();
-  const primes = Array.isArray(data.primes) ? data.primes.slice() : [];
+  const savedPrimeFeed = Array.isArray(data.primeFeedNumbers) && data.primeFeedNumbers.length > 0
+    ? data.primeFeedNumbers.slice(-MAX_PENDING_PRIMES)
+    : Array.isArray(data.primes)
+      ? data.primes.slice(-MAX_PENDING_PRIMES)
+      : [];
 
-  if (primes.length === 0 || primes[0] !== 2) {
-    throw new Error("Invalid prime cache in save file.");
+  if (savedPrimeFeed.length === 0) {
+    throw new Error("Invalid saved prime feed in save file.");
   }
 
+  const lastSavedPrime = savedPrimeFeed[savedPrimeFeed.length - 1];
+  const parsedLastPrime = Math.round(Number(data.lastPrime));
+  const lastPrime = Number.isFinite(parsedLastPrime) ? parsedLastPrime : lastSavedPrime;
+
+  if (lastPrime !== lastSavedPrime) {
+    throw new Error("Saved latest prime does not match the saved prime feed.");
+  }
+
+  const primes = rebuildPrimeCache(lastPrime);
   const recentPrimeWindow = Array.isArray(data.recentPrimeWindow) && data.recentPrimeWindow.length > 0
     ? data.recentPrimeWindow.slice(-RECENT_PRIME_WINDOW)
-    : primes.slice(-RECENT_PRIME_WINDOW);
-  const lastPrime = primes[primes.length - 1];
+    : savedPrimeFeed.slice(-RECENT_PRIME_WINDOW);
   const rawCandidate = Math.round(Number(data.candidate));
   const fallbackCandidate = lastPrime === 2 ? 3 : lastPrime + 2;
   let candidate = Number.isFinite(rawCandidate) ? rawCandidate : fallbackCandidate;
@@ -783,6 +835,20 @@ function parsePositiveIntegerArray(values) {
     .filter((value) => Number.isFinite(value) && value >= 0);
 }
 
+function isStrictlyIncreasingIntegerArray(values) {
+  if (!Array.isArray(values) || values.length === 0) {
+    return false;
+  }
+
+  for (let index = 1; index < values.length; index += 1) {
+    if (values[index] <= values[index - 1]) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
 function cleanupPendingExportRequest(reason = "Save canceled.") {
   if (!pendingExportRequest) {
     return;
@@ -854,10 +920,12 @@ function normalizeSaveData(rawData) {
     throw new Error("This file is not a PrimeCalc save.");
   }
 
-  const primes = parsePositiveIntegerArray(rawData.primes);
+  const primeFeedNumbers = parsePositiveIntegerArray(rawData.primeFeedNumbers);
+  const legacyPrimeCache = parsePositiveIntegerArray(rawData.primes);
+  const savedPrimeFeed = (primeFeedNumbers.length > 0 ? primeFeedNumbers : legacyPrimeCache).slice(-MAX_LOGGED_PRIMES);
 
-  if (primes.length === 0 || primes[0] !== 2) {
-    throw new Error("The save file is missing its prime cache.");
+  if (savedPrimeFeed.length === 0 || !isStrictlyIncreasingIntegerArray(savedPrimeFeed)) {
+    throw new Error("The save file is missing its saved primes.");
   }
 
   const recentPrimeWindow = parsePositiveIntegerArray(rawData.recentPrimeWindow).slice(-100);
@@ -869,8 +937,19 @@ function normalizeSaveData(rawData) {
       }))
       .filter((bucket) => bucket.count > 0)
     : [];
-  const totalPrimeCount = Math.max(primes.length, Math.round(Number(rawData.totalPrimeCount) || primes.length));
-  const lastPrime = primes[primes.length - 1];
+  const totalPrimeCount = Math.max(savedPrimeFeed.length, Math.round(Number(rawData.totalPrimeCount) || savedPrimeFeed.length));
+  const savedLastPrime = savedPrimeFeed[savedPrimeFeed.length - 1];
+  const parsedLastPrime = Math.round(Number(rawData.lastPrime));
+  const lastPrime = Number.isFinite(parsedLastPrime) ? parsedLastPrime : savedLastPrime;
+
+  if (lastPrime !== savedLastPrime) {
+    throw new Error("The save file latest prime does not match its saved prime list.");
+  }
+
+  if (totalPrimeCount <= MAX_LOGGED_PRIMES && savedPrimeFeed[0] !== 2) {
+    throw new Error("The save file is missing earlier primes for this prime count.");
+  }
+
   const candidateValue = Math.round(Number(rawData.candidate));
   let candidate = Number.isFinite(candidateValue) ? candidateValue : (lastPrime === 2 ? 3 : lastPrime + 2);
 
@@ -897,9 +976,8 @@ function normalizeSaveData(rawData) {
     mathVerdict: typeof rawData.mathVerdict === "string" ? rawData.mathVerdict : "PRIME",
     mathText: typeof rawData.mathText === "string" ? rawData.mathText : INITIAL_MATH_TEXT,
     averagePrimeGap: Number.isFinite(Number(rawData.averagePrimeGap)) ? Number(rawData.averagePrimeGap) : 0,
-    primes: primes,
-    recentPrimeWindow: recentPrimeWindow.length > 0 ? recentPrimeWindow : primes.slice(-100),
-    primeFeedNumbers: parsePositiveIntegerArray(rawData.primeFeedNumbers).slice(-MAX_LOGGED_PRIMES),
+    recentPrimeWindow: recentPrimeWindow.length > 0 ? recentPrimeWindow : savedPrimeFeed.slice(-100),
+    primeFeedNumbers: savedPrimeFeed,
     primeRateBuckets: primeRateBuckets,
   };
 }
@@ -923,9 +1001,7 @@ function loadSaveData(saveData) {
   state.averagePrimeGap = saveData.averagePrimeGap;
   state.mathVerdict = saveData.mathVerdict;
   state.mathText = saveData.mathText;
-  state.displayedPrimeLog = saveData.primeFeedNumbers.length > 0
-    ? saveData.primeFeedNumbers.map((prime) => formatInteger(prime))
-    : saveData.primes.slice(-MAX_LOGGED_PRIMES).map((prime) => formatInteger(prime));
+  state.displayedPrimeLog = saveData.primeFeedNumbers.map((prime) => formatInteger(prime));
   state.primeLogText = buildPrimeFeedText(state.displayedPrimeLog, state.primeLogColumns);
   state.primeLogDirty = true;
   updateOverclockButtons();
@@ -974,6 +1050,37 @@ function getRandomCatSize() {
   return Math.round(randomBetween(minSize, maxSize));
 }
 
+function getRandomCatMotion(size, durationMs) {
+  const margin = 8;
+  const maxLeft = Math.max(margin, window.innerWidth - size - margin);
+  const maxTop = Math.max(margin, window.innerHeight - size - margin);
+  const horizontalTravelLimit = Math.max(0, maxLeft - margin);
+  const verticalTravelLimit = Math.max(0, maxTop - margin);
+  const durationSeconds = Math.max(durationMs, 1) / 1000;
+  const speed = randomBetween(CAT_MIN_SPEED_PX_PER_S, CAT_MAX_SPEED_PX_PER_S);
+  const angle = randomBetween(0, Math.PI * 2);
+  let driftX = Math.cos(angle) * speed * durationSeconds;
+  let driftY = Math.sin(angle) * speed * durationSeconds;
+  const horizontalScale = Math.abs(driftX) > 0.01 ? horizontalTravelLimit / Math.abs(driftX) : 1;
+  const verticalScale = Math.abs(driftY) > 0.01 ? verticalTravelLimit / Math.abs(driftY) : 1;
+  const motionScale = Math.min(1, horizontalScale, verticalScale);
+
+  driftX *= motionScale;
+  driftY *= motionScale;
+
+  const minLeft = margin + Math.max(0, -driftX);
+  const maxStartLeft = maxLeft - Math.max(0, driftX);
+  const minTop = margin + Math.max(0, -driftY);
+  const maxStartTop = maxTop - Math.max(0, driftY);
+
+  return {
+    left: Math.round(randomBetween(minLeft, Math.max(minLeft, maxStartLeft))),
+    top: Math.round(randomBetween(minTop, Math.max(minTop, maxStartTop))),
+    driftX: driftX.toFixed(1),
+    driftY: driftY.toFixed(1),
+  };
+}
+
 function getNextFloatingCatSource() {
   if (CAT_SOURCES.length === 0) {
     return null;
@@ -996,16 +1103,15 @@ function spawnFloatingCat() {
 
   const cat = document.createElement("img");
   const size = getRandomCatSize();
-  const margin = 8;
-  const maxLeft = Math.max(margin, window.innerWidth - size - margin);
-  const maxTop = Math.max(margin, window.innerHeight - size - margin);
   const catSource = getNextFloatingCatSource();
 
   if (!catSource) {
     return;
   }
 
-  const catUrl = new URL(catSource, window.location.href);
+  const motion = getRandomCatMotion(size, catSource.durationMs);
+
+  const catUrl = new URL(catSource.src, window.location.href);
 
   nextFloatingCatId += 1;
   catUrl.searchParams.set("spawn", String(nextFloatingCatId));
@@ -1017,17 +1123,17 @@ function spawnFloatingCat() {
   cat.decoding = "async";
   cat.loading = "eager";
   cat.style.width = `${size}px`;
-  cat.style.left = `${Math.round(randomBetween(margin, maxLeft))}px`;
-  cat.style.top = `${Math.round(randomBetween(margin, maxTop))}px`;
-  cat.style.setProperty("--cat-life", `${SPIN_CAT_PLAY_DURATION_MS}ms`);
-  cat.style.setProperty("--cat-drift-x", `${randomBetween(-24, 24).toFixed(1)}px`);
-  cat.style.setProperty("--cat-drift-y", `${randomBetween(-18, 18).toFixed(1)}px`);
+  cat.style.left = `${motion.left}px`;
+  cat.style.top = `${motion.top}px`;
+  cat.style.setProperty("--cat-life", `${catSource.durationMs}ms`);
+  cat.style.setProperty("--cat-drift-x", `${motion.driftX}px`);
+  cat.style.setProperty("--cat-drift-y", `${motion.driftY}px`);
   elements.catOverlay.append(cat);
 
   const cleanupId = window.setTimeout(() => {
     activeCatCleanupIds.delete(cleanupId);
     cat.remove();
-  }, SPIN_CAT_PLAY_DURATION_MS + 160);
+  }, catSource.durationMs + 160);
 
   activeCatCleanupIds.add(cleanupId);
 }
