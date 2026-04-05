@@ -9,6 +9,23 @@
 <body>
   <div class="screen-glow" aria-hidden="true"></div>
   <div id="cat-overlay" class="cat-overlay" aria-hidden="true"></div>
+  <div id="welcome-screen" class="welcome-screen">
+    <section class="window welcome-window" role="dialog" aria-modal="true" aria-labelledby="welcome-title">
+      <div class="window__header">
+        <span class="window__title">PrimeCalc</span>
+        <span class="window__meta">Ready To Begin</span>
+      </div>
+      <div class="window__body welcome-window__body">
+        <p class="eyebrow">Welcome Terminal</p>
+        <h2 id="welcome-title" class="welcome-title">Prime Number Finder</h2>
+        <p class="welcome-copy">Welcome! This website works through all the numbers finding every single prime number. The longer it runs the more prime numbers it will find. You can also save your progress too. Thank you for visiting the site! :)</p>
+        <div class="welcome-actions">
+          <button id="welcome-start-button" class="control-button welcome-button" type="button">Start New</button>
+          <button id="welcome-load-button" class="control-button control-button--ghost welcome-button" type="button">Load</button>
+        </div>
+      </div>
+    </section>
+  </div>
   <main class="app-shell">
     <header class="hero-panel window">
       <div class="window__header">

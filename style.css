@@ -65,6 +65,72 @@ body::before {
   overflow: hidden;
 }
 
+.welcome-screen {
+  position: fixed;
+  inset: 0;
+  z-index: 12;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  background:
+    linear-gradient(180deg, rgba(1, 6, 1, 0.68), rgba(0, 2, 0, 0.84)),
+    radial-gradient(circle at top, rgba(16, 82, 26, 0.22), transparent 52%);
+  backdrop-filter: blur(6px);
+}
+
+.welcome-screen[hidden] {
+  display: none;
+}
+
+.welcome-window {
+  width: min(100%, 760px);
+}
+
+.welcome-window__body {
+  display: grid;
+  gap: 16px;
+  padding: clamp(22px, 4vw, 34px);
+}
+
+.welcome-title {
+  margin: 0;
+  font-size: clamp(2rem, 6vw, 4.1rem);
+  line-height: 0.96;
+  text-transform: uppercase;
+  color: var(--text-bright);
+  text-shadow:
+    0 0 0 var(--text-bright),
+    2px 0 0 rgba(79, 255, 113, 0.76),
+    0 2px 0 rgba(79, 255, 113, 0.58),
+    0 0 20px rgba(79, 255, 113, 0.24);
+  font-family: "Terminal", "Fixedsys Excelsior 3.01", "Courier New", monospace;
+  letter-spacing: 0.08em;
+  text-rendering: optimizeSpeed;
+  -webkit-font-smoothing: none;
+  font-smooth: never;
+}
+
+.welcome-copy {
+  margin: 0;
+  max-width: 58ch;
+  font-size: 0.98rem;
+  line-height: 1.75;
+  color: var(--text);
+}
+
+.welcome-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  margin-top: 6px;
+}
+
+.welcome-button {
+  min-height: 64px;
+  font-size: 1rem;
+  letter-spacing: 0.12em;
+}
+
 .floating-cat {
   position: absolute;
   height: auto;
@@ -522,6 +588,10 @@ input:focus-visible {
   }
 
   .control-readout {
+    grid-template-columns: 1fr;
+  }
+
+  .welcome-actions {
     grid-template-columns: 1fr;
   }
 

@@ -36,6 +36,9 @@ const budgetFormatter = new Intl.NumberFormat("en-US", {
 const elements = {
   speedButtons: Array.from(document.querySelectorAll(".speed-option")),
   overclockValue: document.querySelector("#overclock-value"),
+  welcomeScreen: document.querySelector("#welcome-screen"),
+  welcomeStartButton: document.querySelector("#welcome-start-button"),
+  welcomeLoadButton: document.querySelector("#welcome-load-button"),
   pauseToggle: document.querySelector("#pause-toggle"),
   saveButton: document.querySelector("#save-button"),
   loadButton: document.querySelector("#load-button"),
@@ -74,7 +77,7 @@ const INITIAL_MATH_TEXT = [
 ].join("\n");
 
 const state = {
-  running: true,
+  running: false,
   workerError: false,
   mathBudgetMs: DEFAULT_MATH_BUDGET_MS,
   actualMathBudgetMs: 0,
@@ -660,6 +663,7 @@ function tick() {
 
 function initialize(message) {
   state = createState();
+  state.running = Boolean(message.running);
   state.mathBudgetMs = clampBudget(message.mathBudgetMs);
   state.maxMode = Boolean(message.maxMode);
   state.reportIntervalMs = clampReportInterval(message.reportIntervalMs);
@@ -807,6 +811,35 @@ function buildPrimeFeedText(labels, columns) {
   }
 
   return rows.join("\n");
+}
+
+function showWelcomeScreen() {
+  if (elements.welcomeScreen) {
+    elements.welcomeScreen.hidden = false;
+  }
+}
+
+function hideWelcomeScreen() {
+  if (elements.welcomeScreen) {
+    elements.welcomeScreen.hidden = true;
+  }
+}
+
+function openLoadDialog() {
+  if (!elements.loadInput) {
+    return;
+  }
+
+  elements.loadInput.value = "";
+  elements.loadInput.click();
+}
+
+function startNewSession() {
+  cleanupPendingExportRequest("Save canceled while starting a new session.");
+  hideWelcomeScreen();
+  resetDisplayState();
+  render(performance.now(), true);
+  primeWorker.postMessage({ type: "reset" });
 }
 
 function getPrimeFeedColumnCount() {
@@ -984,6 +1017,7 @@ function normalizeSaveData(rawData) {
 
 function loadSaveData(saveData) {
   cleanupPendingExportRequest("Save canceled while loading a save file.");
+  hideWelcomeScreen();
   clearFloatingCats();
   state.workerError = false;
   state.overclockMode = saveData.maxMode ? "max" : "manual";
@@ -1442,13 +1476,14 @@ elements.saveButton.addEventListener("click", async () => {
   }
 });
 
-elements.loadButton.addEventListener("click", () => {
-  if (!elements.loadInput) {
-    return;
-  }
+elements.loadButton.addEventListener("click", openLoadDialog);
 
-  elements.loadInput.value = "";
-  elements.loadInput.click();
+elements.welcomeStartButton?.addEventListener("click", () => {
+  startNewSession();
+});
+
+elements.welcomeLoadButton?.addEventListener("click", () => {
+  openLoadDialog();
 });
 
 elements.loadInput.addEventListener("change", async (event) => {
@@ -1501,11 +1536,13 @@ window.addEventListener("resize", () => {
 });
 
 updateOverclockButtons();
+showWelcomeScreen();
 render(performance.now(), true);
 scheduleNextAnimationFrame();
 scheduleNextFloatingCat();
 primeWorker.postMessage({
   type: "init",
+  running: state.running,
   mathBudgetMs: state.mathBudgetMs,
   maxMode: state.overclockMode === "max",
   reportIntervalMs: getWorkerReportInterval(),
