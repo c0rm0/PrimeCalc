@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PrimeCalc</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="screen-glow" aria-hidden="true"></div>
+  <main class="app-shell">
+    <header class="hero-panel window">
+      <div class="window__header">
+        <span class="window__title">PrimeCalc</span>
+        <span class="window__meta">Prime Search Terminal v1.0</span>
+      </div>
+      <div class="window__body hero-panel__body">
+        <div>
+          <p class="eyebrow">Continuous Prime Number Discovery</p>
+          <h1>Prime Number Finder</h1>
+        </div>
+        <div class="control-cluster">
+          <p id="overclock-label" class="control-label">Overclock Pace</p>
+          <div class="speed-options" role="group" aria-labelledby="overclock-label">
+            <button class="speed-option" type="button" data-speed-value="0.0001">0.0001 ms</button>
+            <button class="speed-option" type="button" data-speed-value="0.001">0.001 ms</button>
+            <button class="speed-option" type="button" data-speed-value="0.01">0.01 ms</button>
+            <button class="speed-option" type="button" data-speed-value="0.1">0.1 ms</button>
+            <button class="speed-option speed-option--active" type="button" data-speed-value="1">1 ms</button>
+            <button class="speed-option" type="button" data-speed-value="5">5 ms</button>
+            <button class="speed-option speed-option--max" type="button" data-speed-mode="max">Max</button>
+          </div>
+          <div class="control-readout">
+            <span id="overclock-value">Manual pace: 1.0000 ms / cycle | actual 0.0000 ms</span>
+            <button id="pause-toggle" class="control-button" type="button">Pause</button>
+            <button id="reset-button" class="control-button control-button--ghost" type="button">Reset</button>
+          </div>
+          <p class="control-hint">Manual mode shows your selected worker-cycle pace and the real math time in use. Max mode tells the worker to keep crunching prime math as fast as it can.</p>
+        </div>
+      </div>
+    </header>
+
+    <section class="dashboard-grid" aria-label="Prime calculation dashboard">
+      <article class="window window--feature latest-prime-window">
+        <div class="window__header">
+          <span class="window__title">Last Prime Calculated</span>
+          <span class="window__meta" id="system-status">RUNNING</span>
+        </div>
+        <div class="window__body">
+          <div
+            id="latest-prime"
+            class="latest-prime-box"
+            aria-label="Last prime calculated"
+            aria-live="polite"
+          >2</div>
+        </div>
+      </article>
+
+      <article class="window stat-window">
+        <div class="window__header">
+          <span class="window__title">Calculation Speed</span>
+        </div>
+        <div class="window__body">
+          <p class="stat-value" id="calc-speed">0</p>
+          <p class="stat-label">numbers checked / second</p>
+        </div>
+      </article>
+
+      <article class="window stat-window">
+        <div class="window__header">
+          <span class="window__title">Frame Rate</span>
+        </div>
+        <div class="window__body">
+          <p class="stat-value" id="fps-counter">0</p>
+          <p class="stat-label">avg frames / second over last 5s</p>
+        </div>
+      </article>
+
+      <article class="window stat-window">
+        <div class="window__header">
+          <span class="window__title">Prime Count</span>
+        </div>
+        <div class="window__body">
+          <p class="stat-value" id="prime-count">1</p>
+          <p class="stat-label">prime numbers found</p>
+        </div>
+      </article>
+
+      <article class="window stat-window">
+        <div class="window__header">
+          <span class="window__title">Prime Discovery Rate</span>
+        </div>
+        <div class="window__body">
+          <p class="stat-value" id="prime-speed">0</p>
+          <p class="stat-label">avg primes / second over last 5s</p>
+        </div>
+      </article>
+
+      <article class="window stat-window">
+        <div class="window__header">
+          <span class="window__title">Current Candidate</span>
+        </div>
+        <div class="window__body">
+          <p class="stat-value" id="current-candidate">3</p>
+          <p class="stat-label">number being tested next</p>
+        </div>
+      </article>
+
+      <article class="window stat-window">
+        <div class="window__header">
+          <span class="window__title">Numbers Tested</span>
+        </div>
+        <div class="window__body">
+          <p class="stat-value" id="tested-count">1</p>
+          <p class="stat-label">total candidates processed</p>
+        </div>
+      </article>
+
+      <article class="window stat-window">
+        <div class="window__header">
+          <span class="window__title">Prime Gap</span>
+        </div>
+        <div class="window__body">
+          <p class="stat-value" id="prime-gap-average">0.00</p>
+          <p class="stat-label">avg gap across last 100 primes</p>
+        </div>
+      </article>
+
+      <article class="window stat-window">
+        <div class="window__header">
+          <span class="window__title">System Uptime</span>
+        </div>
+        <div class="window__body">
+          <p class="stat-value" id="uptime">00:00:00</p>
+          <p class="stat-label">prime scanner runtime</p>
+        </div>
+      </article>
+
+      <article class="window math-window">
+        <div class="window__header">
+          <span class="window__title">Prime Test Math</span>
+          <span class="window__meta" id="math-verdict">PRIME</span>
+        </div>
+        <div class="window__body">
+          <div id="math-log" class="prime-log math-log" aria-live="polite">Testing 3
+sqrt(3) = 1.73, so the scanner can already mark 3 as prime.
+
+limit: sqrt(3) = 1.73
+divisor checks: none needed
+result: PRIME</div>
+        </div>
+      </article>
+
+      <article class="window window--log prime-log-window">
+        <div class="window__header">
+          <span class="window__title">Prime Number Feed</span>
+          <span class="window__meta">Wide Data Channel</span>
+        </div>
+        <div class="window__body">
+          <div id="prime-log" class="prime-log prime-feed" aria-live="polite">2</div>
+        </div>
+      </article>
+    </section>
+  </main>
+
+  <script src="script.js"></script>
+</body>
+</html>
