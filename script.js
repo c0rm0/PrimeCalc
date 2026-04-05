@@ -6,6 +6,9 @@ const WORKER_REPORT_INTERVAL_VISIBLE_MS = 1000 / 16;
 const WORKER_REPORT_INTERVAL_HIDDEN_MS = 1000;
 const MIN_MATH_BUDGET_MS = 0.0001;
 const DEFAULT_MATH_BUDGET_MS = 1;
+const SAVE_FILE_FORMAT = "PrimeCalcSave";
+const SAVE_FILE_VERSION = 1;
+const EXPORT_REQUEST_TIMEOUT_MS = 15000;
 const SPIN_CAT_PLAY_DURATION_MS = 3090;
 const CAT_SPAWN_INTERVAL_MS = 3000;
 const CAT_MIN_SIZE_PX = 28;
@@ -26,6 +29,9 @@ const elements = {
   speedButtons: Array.from(document.querySelectorAll(".speed-option")),
   overclockValue: document.querySelector("#overclock-value"),
   pauseToggle: document.querySelector("#pause-toggle"),
+  saveButton: document.querySelector("#save-button"),
+  loadButton: document.querySelector("#load-button"),
+  loadInput: document.querySelector("#load-input"),
   resetButton: document.querySelector("#reset-button"),
   systemStatus: document.querySelector("#system-status"),
   latestPrime: document.querySelector("#latest-prime"),
@@ -89,6 +95,7 @@ let pendingAnimationFrameId = 0;
 let pendingAnimationFallbackId = 0;
 let pendingCatSpawnId = 0;
 let nextFloatingCatId = 0;
+let pendingExportRequest = null;
 const activeCatCleanupIds = new Set();
 
 const workerSource = `
@@ -225,6 +232,104 @@ function createState() {
       verdict: "PRIME",
     }),
   };
+}
+
+function buildSaveData() {
+  const now = performance.now();
+  prunePrimeRateBuckets(now);
+
+  return {
+    format: "${SAVE_FILE_FORMAT}",
+    version: ${SAVE_FILE_VERSION},
+    savedAt: new Date().toISOString(),
+    running: state.running,
+    mathBudgetMs: state.mathBudgetMs,
+    maxMode: state.maxMode,
+    runtimeMs: state.runtimeMs,
+    testedCount: state.testedCount,
+    totalPrimeCount: state.totalPrimeCount,
+    lastPrime: state.lastPrime,
+    candidate: state.candidate,
+    mathVerdict: state.mathVerdict,
+    mathText: state.mathText,
+    averagePrimeGap: state.averagePrimeGap,
+    primes: state.primes.slice(),
+    recentPrimeWindow: state.recentPrimeWindow.slice(),
+    primeFeedNumbers: state.primes.slice(-MAX_PENDING_PRIMES),
+    primeRateBuckets: state.primeRateBuckets.map((bucket) => ({
+      ageMs: Math.max(0, now - bucket.time),
+      count: bucket.count,
+    })),
+  };
+}
+
+function importState(data, reportIntervalMs) {
+  const now = performance.now();
+  const primes = Array.isArray(data.primes) ? data.primes.slice() : [];
+
+  if (primes.length === 0 || primes[0] !== 2) {
+    throw new Error("Invalid prime cache in save file.");
+  }
+
+  const recentPrimeWindow = Array.isArray(data.recentPrimeWindow) && data.recentPrimeWindow.length > 0
+    ? data.recentPrimeWindow.slice(-RECENT_PRIME_WINDOW)
+    : primes.slice(-RECENT_PRIME_WINDOW);
+  const lastPrime = primes[primes.length - 1];
+  const rawCandidate = Math.round(Number(data.candidate));
+  const fallbackCandidate = lastPrime === 2 ? 3 : lastPrime + 2;
+  let candidate = Number.isFinite(rawCandidate) ? rawCandidate : fallbackCandidate;
+
+  if (candidate <= lastPrime) {
+    candidate = fallbackCandidate;
+  }
+
+  if (candidate % 2 === 0) {
+    candidate += 1;
+  }
+
+  state = createState();
+  state.running = Boolean(data.running);
+  state.mathBudgetMs = clampBudget(data.mathBudgetMs);
+  state.maxMode = Boolean(data.maxMode);
+  state.reportIntervalMs = clampReportInterval(reportIntervalMs);
+  state.lastTickTime = now;
+  state.lastCalcSampleTime = now;
+  state.lastCalcSampleTestedCount = Math.max(1, Math.round(Number(data.testedCount) || 1));
+  state.lastReportTime = 0;
+  state.runtimeMs = Math.max(0, Number(data.runtimeMs) || 0);
+  state.primes = primes;
+  state.recentPrimeWindow = recentPrimeWindow;
+  state.lastPrime = lastPrime;
+  state.candidate = candidate;
+  state.testedCount = Math.max(1, Math.round(Number(data.testedCount) || 1));
+  state.totalPrimeCount = Math.max(primes.length, Math.round(Number(data.totalPrimeCount) || primes.length));
+  state.averagePrimeGap = calculateAveragePrimeGap(state.recentPrimeWindow);
+  state.primeRateBuckets = Array.isArray(data.primeRateBuckets)
+    ? data.primeRateBuckets
+      .map((bucket) => ({
+        time: now - Math.max(0, Number(bucket.ageMs) || 0),
+        count: Math.max(0, Math.round(Number(bucket.count) || 0)),
+      }))
+      .filter((bucket) => bucket.count > 0 && now - bucket.time <= PRIME_RATE_WINDOW_MS)
+    : [];
+  state.pendingPrimeLabels = [];
+  state.resetPrimeLog = true;
+  state.mathVerdict = typeof data.mathVerdict === "string" ? data.mathVerdict : "PRIME";
+  state.mathText = typeof data.mathText === "string" && data.mathText.trim()
+    ? data.mathText
+    : buildMathText({
+      candidate: candidate,
+      limit: Math.sqrt(candidate),
+      availablePrimeCount: primes.length,
+      checks: 0,
+      sampleChecks: [],
+      highestDivisorTested: null,
+      divisor: null,
+      stopReason: "Save loaded. Prime scan resumed.",
+      verdict: state.mathVerdict,
+    });
+  ensureLoop();
+  postSnapshot(now);
 }
 
 function prunePrimeRateBuckets(now) {
@@ -399,6 +504,9 @@ function postSnapshot(now) {
     actualMathBudgetMs: state.actualMathBudgetMs,
     mathVerdict: state.mathVerdict,
     mathText: state.mathText,
+    primeFeedLabels: state.resetPrimeLog
+      ? state.primes.slice(-MAX_PENDING_PRIMES).map((prime) => formatInteger(prime))
+      : null,
     newPrimeLabels: state.pendingPrimeLabels.slice(),
     resetPrimeLog: state.resetPrimeLog,
   });
@@ -508,6 +616,21 @@ self.addEventListener("message", (event) => {
       resetState();
       break;
 
+    case "export-state":
+      if (!state) {
+        break;
+      }
+
+      self.postMessage({
+        type: "export-state",
+        data: buildSaveData(),
+      });
+      break;
+
+    case "import-state":
+      importState(message.data, message.reportIntervalMs);
+      break;
+
     case "set-report-interval":
       if (!state) {
         break;
@@ -600,6 +723,171 @@ function setText(element, value) {
   if (element.textContent !== value) {
     element.textContent = value;
   }
+}
+
+function parsePositiveIntegerArray(values) {
+  if (!Array.isArray(values)) {
+    return [];
+  }
+
+  return values
+    .map((value) => Math.round(Number(value)))
+    .filter((value) => Number.isFinite(value) && value >= 0);
+}
+
+function cleanupPendingExportRequest(reason = "Save canceled.") {
+  if (!pendingExportRequest) {
+    return;
+  }
+
+  const { reject, timeoutId } = pendingExportRequest;
+  window.clearTimeout(timeoutId);
+  pendingExportRequest = null;
+
+  if (typeof reject === "function") {
+    reject(new Error(reason));
+  }
+}
+
+function requestWorkerSaveData() {
+  if (pendingExportRequest) {
+    return Promise.reject(new Error("A save is already in progress."));
+  }
+
+  return new Promise((resolve, reject) => {
+    const timeoutId = window.setTimeout(() => {
+      pendingExportRequest = null;
+      reject(new Error("Timed out while waiting for worker save data."));
+    }, EXPORT_REQUEST_TIMEOUT_MS);
+
+    pendingExportRequest = {
+      resolve,
+      reject,
+      timeoutId,
+    };
+
+    primeWorker.postMessage({ type: "export-state" });
+  });
+}
+
+function buildSaveFileName() {
+  const timestamp = new Date()
+    .toISOString()
+    .replace(/:/g, "-")
+    .replace(/\..+/, "");
+
+  return `primecalc-save-${timestamp}.json`;
+}
+
+function downloadSaveData(saveData) {
+  const blob = new Blob([JSON.stringify(saveData, null, 2)], {
+    type: "application/json",
+  });
+  const downloadUrl = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+
+  link.href = downloadUrl;
+  link.download = buildSaveFileName();
+  link.style.display = "none";
+  document.body.append(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => {
+    URL.revokeObjectURL(downloadUrl);
+  }, 1000);
+}
+
+function normalizeSaveData(rawData) {
+  if (!rawData || typeof rawData !== "object") {
+    throw new Error("The save file is not valid JSON data.");
+  }
+
+  if (rawData.format !== SAVE_FILE_FORMAT) {
+    throw new Error("This file is not a PrimeCalc save.");
+  }
+
+  const primes = parsePositiveIntegerArray(rawData.primes);
+
+  if (primes.length === 0 || primes[0] !== 2) {
+    throw new Error("The save file is missing its prime cache.");
+  }
+
+  const recentPrimeWindow = parsePositiveIntegerArray(rawData.recentPrimeWindow).slice(-100);
+  const primeRateBuckets = Array.isArray(rawData.primeRateBuckets)
+    ? rawData.primeRateBuckets
+      .map((bucket) => ({
+        ageMs: Math.max(0, Number(bucket?.ageMs) || 0),
+        count: Math.max(0, Math.round(Number(bucket?.count) || 0)),
+      }))
+      .filter((bucket) => bucket.count > 0)
+    : [];
+  const totalPrimeCount = Math.max(primes.length, Math.round(Number(rawData.totalPrimeCount) || primes.length));
+  const lastPrime = primes[primes.length - 1];
+  const candidateValue = Math.round(Number(rawData.candidate));
+  let candidate = Number.isFinite(candidateValue) ? candidateValue : (lastPrime === 2 ? 3 : lastPrime + 2);
+
+  if (candidate <= lastPrime) {
+    candidate = lastPrime === 2 ? 3 : lastPrime + 2;
+  }
+
+  if (candidate % 2 === 0) {
+    candidate += 1;
+  }
+
+  return {
+    format: SAVE_FILE_FORMAT,
+    version: Math.max(1, Math.round(Number(rawData.version) || SAVE_FILE_VERSION)),
+    savedAt: typeof rawData.savedAt === "string" ? rawData.savedAt : new Date().toISOString(),
+    running: Boolean(rawData.running),
+    mathBudgetMs: clampMathBudget(rawData.mathBudgetMs),
+    maxMode: Boolean(rawData.maxMode),
+    runtimeMs: Math.max(0, Number(rawData.runtimeMs) || 0),
+    testedCount: Math.max(1, Math.round(Number(rawData.testedCount) || 1)),
+    totalPrimeCount: totalPrimeCount,
+    lastPrime: lastPrime,
+    candidate: candidate,
+    mathVerdict: typeof rawData.mathVerdict === "string" ? rawData.mathVerdict : "PRIME",
+    mathText: typeof rawData.mathText === "string" ? rawData.mathText : INITIAL_MATH_TEXT,
+    averagePrimeGap: Number.isFinite(Number(rawData.averagePrimeGap)) ? Number(rawData.averagePrimeGap) : 0,
+    primes: primes,
+    recentPrimeWindow: recentPrimeWindow.length > 0 ? recentPrimeWindow : primes.slice(-100),
+    primeFeedNumbers: parsePositiveIntegerArray(rawData.primeFeedNumbers).slice(-MAX_LOGGED_PRIMES),
+    primeRateBuckets: primeRateBuckets,
+  };
+}
+
+function loadSaveData(saveData) {
+  cleanupPendingExportRequest("Save canceled while loading a save file.");
+  clearFloatingCats();
+  state.workerError = false;
+  state.overclockMode = saveData.maxMode ? "max" : "manual";
+  state.manualBudgetMs = saveData.mathBudgetMs;
+  state.mathBudgetMs = saveData.mathBudgetMs;
+  state.actualMathBudgetMs = 0;
+  state.running = saveData.running;
+  state.lastPrime = saveData.lastPrime;
+  state.candidate = saveData.candidate;
+  state.testedCount = saveData.testedCount;
+  state.totalPrimeCount = saveData.totalPrimeCount;
+  state.runtimeMs = saveData.runtimeMs;
+  state.calcSpeed = 0;
+  state.primeSpeed = 0;
+  state.averagePrimeGap = saveData.averagePrimeGap;
+  state.mathVerdict = saveData.mathVerdict;
+  state.mathText = saveData.mathText;
+  state.displayedPrimeLog = saveData.primeFeedNumbers.length > 0
+    ? saveData.primeFeedNumbers.map((prime) => formatInteger(prime))
+    : saveData.primes.slice(-MAX_LOGGED_PRIMES).map((prime) => formatInteger(prime));
+  state.primeLogText = buildPrimeFeedText(state.displayedPrimeLog, state.primeLogColumns);
+  state.primeLogDirty = true;
+  updateOverclockButtons();
+  render(performance.now(), true);
+  primeWorker.postMessage({
+    type: "import-state",
+    data: saveData,
+    reportIntervalMs: getWorkerReportInterval(),
+  });
+  scheduleNextFloatingCat();
 }
 
 function randomBetween(min, max) {
@@ -808,8 +1096,10 @@ function applyWorkerSnapshot(snapshot) {
   state.mathText = snapshot.mathText;
 
   if (snapshot.resetPrimeLog) {
-    state.displayedPrimeLog = ["2"];
-    state.primeLogText = "2";
+    state.displayedPrimeLog = Array.isArray(snapshot.primeFeedLabels) && snapshot.primeFeedLabels.length > 0
+      ? snapshot.primeFeedLabels.slice(-MAX_LOGGED_PRIMES)
+      : ["2"];
+    state.primeLogText = buildPrimeFeedText(state.displayedPrimeLog, state.primeLogColumns);
     state.primeLogDirty = true;
   }
 
@@ -864,7 +1154,7 @@ function render(now = performance.now(), force = false) {
   setText(elements.uptime, formatUptime(state.runtimeMs));
   setText(elements.mathVerdict, state.mathVerdict);
   setText(elements.mathLog, state.mathText);
-  setText(elements.pauseToggle, state.running ? "Pause" : "Resume");
+  setText(elements.pauseToggle, state.running ? "Pause" : "Start");
 
   if (state.primeLogDirty) {
     state.primeLogText = buildPrimeFeedText(state.displayedPrimeLog, state.primeLogColumns);
@@ -911,14 +1201,31 @@ function scheduleNextAnimationFrame() {
 }
 
 primeWorker.addEventListener("message", (event) => {
-  if (!event.data || event.data.type !== "snapshot") {
+  if (!event.data) {
     return;
   }
 
-  applyWorkerSnapshot(event.data);
+  if (event.data.type === "snapshot") {
+    applyWorkerSnapshot(event.data);
+    return;
+  }
+
+  if (event.data.type === "export-state" && pendingExportRequest) {
+    const { resolve, timeoutId } = pendingExportRequest;
+    window.clearTimeout(timeoutId);
+    pendingExportRequest = null;
+    resolve(event.data.data);
+  }
 });
 
 primeWorker.addEventListener("error", () => {
+  if (pendingExportRequest) {
+    const { reject, timeoutId } = pendingExportRequest;
+    window.clearTimeout(timeoutId);
+    pendingExportRequest = null;
+    reject(new Error("Background worker failed during save."));
+  }
+
   state.workerError = true;
   state.running = false;
   state.mathVerdict = "ERROR";
@@ -951,7 +1258,48 @@ elements.pauseToggle.addEventListener("click", () => {
   });
 });
 
+elements.saveButton.addEventListener("click", async () => {
+  try {
+    const saveData = await requestWorkerSaveData();
+    downloadSaveData(saveData);
+  } catch (error) {
+    window.alert(error instanceof Error ? error.message : "Save failed.");
+  }
+});
+
+elements.loadButton.addEventListener("click", () => {
+  if (!elements.loadInput) {
+    return;
+  }
+
+  elements.loadInput.value = "";
+  elements.loadInput.click();
+});
+
+elements.loadInput.addEventListener("change", async (event) => {
+  const input = event.currentTarget;
+  const file = input?.files?.[0];
+
+  if (!file) {
+    return;
+  }
+
+  try {
+    const fileText = await file.text();
+    const rawSaveData = JSON.parse(fileText);
+    const saveData = normalizeSaveData(rawSaveData);
+    loadSaveData(saveData);
+  } catch (error) {
+    window.alert(error instanceof Error ? error.message : "Load failed.");
+  } finally {
+    if (input) {
+      input.value = "";
+    }
+  }
+});
+
 elements.resetButton.addEventListener("click", () => {
+  cleanupPendingExportRequest("Save canceled while resetting the program.");
   resetDisplayState();
   render(performance.now(), true);
   primeWorker.postMessage({ type: "reset" });
