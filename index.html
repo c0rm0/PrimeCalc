@@ -44,12 +44,13 @@
             <button class="speed-option" type="button" data-speed-value="0.001">0.001 ms</button>
             <button class="speed-option" type="button" data-speed-value="0.01">0.01 ms</button>
             <button class="speed-option" type="button" data-speed-value="0.1">0.1 ms</button>
-            <button class="speed-option speed-option--active" type="button" data-speed-value="1">1 ms</button>
+            <button class="speed-option" type="button" data-speed-value="1">1 ms</button>
             <button class="speed-option" type="button" data-speed-value="5">5 ms</button>
+            <button class="speed-option speed-option--active" type="button" data-speed-value="50">50 ms</button>
             <button class="speed-option speed-option--max" type="button" data-speed-mode="max">Max</button>
           </div>
           <div class="control-readout">
-            <span id="overclock-value">Manual pace: 1.0000 ms / cycle | actual avg (10s) 0.0000 ms</span>
+            <span id="overclock-value">Manual pace: 50.0000 ms / cycle | actual avg (10s) 0.0000 ms</span>
             <button id="pause-toggle" class="control-button" type="button">Pause</button>
             <button id="save-button" class="control-button" type="button">Save</button>
             <button id="load-button" class="control-button" type="button">Load</button>
@@ -168,12 +169,9 @@
           <span class="window__meta" id="math-verdict">PRIME</span>
         </div>
         <div class="window__body">
-          <div id="math-log" class="prime-log math-log" aria-live="polite">Testing 3
-sqrt(3) = 1.73, so the scanner can already mark 3 as prime.
-
-limit: sqrt(3) = 1.73
-divisor checks: none needed
-result: PRIME</div>
+          <div id="math-log" class="prime-log math-log" aria-live="polite">primecalc&gt; waiting for the next solved prime proof
+primecalc&gt; this window locks onto the most recently discovered prime
+primecalc&gt; then replays every divisor check used to prove it</div>
         </div>
       </article>
 

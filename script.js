@@ -6,7 +6,7 @@ const MAX_LOGGED_PRIMES = 5000;
 const WORKER_REPORT_INTERVAL_VISIBLE_MS = 1000 / 16;
 const WORKER_REPORT_INTERVAL_HIDDEN_MS = 1000;
 const MIN_MATH_BUDGET_MS = 0.0001;
-const DEFAULT_MATH_BUDGET_MS = 1;
+const DEFAULT_MATH_BUDGET_MS = 50;
 const SAVE_FILE_FORMAT = "PrimeCalcSave";
 const SAVE_FILE_VERSION = 1;
 const EXPORT_REQUEST_TIMEOUT_MS = 15000;
@@ -32,6 +32,10 @@ const budgetFormatter = new Intl.NumberFormat("en-US", {
   minimumFractionDigits: 4,
   maximumFractionDigits: 4,
 });
+const MATH_TYPING_TARGET_DURATION_MS = 2200;
+const MATH_TYPING_MIN_CHARS_PER_SEC = 220;
+const MATH_TYPING_MAX_CHARS_PER_SEC = 6000;
+const MATH_TYPING_CURSOR_BLINK_MS = 240;
 
 const elements = {
   speedButtons: Array.from(document.querySelectorAll(".speed-option")),
@@ -61,19 +65,9 @@ const elements = {
 };
 
 const INITIAL_MATH_TEXT = [
-  "Testing 3",
-  "rule: test odd candidates with stored prime divisors up to sqrt(candidate)",
-  "parity: odd candidate, so even divisors are skipped",
-  "",
-  "sqrt limit: 1.73 (trial divisors <= 1)",
-  "stored primes available: 1",
-  "divisor checks run: 0",
-  "sample modulo checks:",
-  "none needed",
-  "highest divisor tested: none needed",
-  "stop reason: sqrt(3) = 1.73, so the scanner can already mark 3 as prime.",
-  "",
-  "result: PRIME",
+  "primecalc> waiting for the next solved prime proof",
+  "primecalc> this window locks onto the most recently discovered prime",
+  "primecalc> then replays every divisor check used to prove it",
 ].join("\n");
 
 const state = {
@@ -99,6 +93,8 @@ const state = {
   primeLogDirty: true,
   mathVerdict: "PRIME",
   mathText: INITIAL_MATH_TEXT,
+  mathTypingStartedAt: 0,
+  mathTypingCharsPerSecond: 0,
   lastUiRenderTime: 0,
 };
 
@@ -119,11 +115,11 @@ const DEFAULT_BUDGET_MS = ${DEFAULT_MATH_BUDGET_MS};
 const DEFAULT_REPORT_INTERVAL_MS = 1000 / 16;
 const MIN_BUDGET_MS = ${MIN_MATH_BUDGET_MS};
 const MAX_PENDING_PRIMES = 5000;
-const MAX_TRACE_SAMPLES = 6;
 const RECENT_PRIME_WINDOW = 100;
 const MAX_ITERATIONS_PER_CYCLE = 20000;
 const ACTIVE_TICK_DELAY_MS = 0;
 const PAUSED_TICK_DELAY_MS = 50;
+const INITIAL_PROOF_TEXT = ${JSON.stringify(INITIAL_MATH_TEXT)};
 
 const integerFormatter = new Intl.NumberFormat("en-US");
 const decimalFormatter = new Intl.NumberFormat("en-US", {
@@ -158,35 +154,54 @@ function clampReportInterval(value) {
   return Math.max(100, value);
 }
 
-function buildMathText(details) {
+function buildPrimeProofText(details) {
+  const prompt = "primecalc> ";
   const lines = [
-    "Testing " + formatInteger(details.candidate),
-    "rule: test odd candidates with stored prime divisors up to sqrt(candidate)",
-    "parity: odd candidate, so even divisors are skipped",
-    "",
-    "sqrt limit: " + formatDecimal(details.limit) + " (trial divisors <= " + formatInteger(Math.floor(details.limit)) + ")",
-    "stored primes available: " + formatInteger(details.availablePrimeCount),
-    "divisor checks run: " + formatInteger(details.checks),
-    "sample modulo checks:",
+    prompt + "latest solved prime locked: " + formatInteger(details.candidate),
   ];
 
-  if (details.sampleChecks.length === 0) {
-    lines.push("none needed");
+  if (details.candidate === 2) {
+    lines.push(prompt + "candidate 2 is the only even prime");
+    lines.push(prompt + "total divisor checks: 0");
+    lines.push(prompt + "verdict: PRIME");
+    lines.push(prompt + "2 enters the prime feed");
+    return lines.join("\\n");
+  }
+
+  lines.push(prompt + "rule: test stored prime divisors up to sqrt(candidate)");
+  lines.push(prompt + "candidate parity: odd -> divisor 2 skipped");
+  lines.push(prompt + "sqrt(" + formatInteger(details.candidate) + ") = " + formatDecimal(details.limit));
+  lines.push(prompt + "trial divisors allowed through " + formatInteger(Math.floor(details.limit)));
+  lines.push(prompt + "stored primes available: " + formatInteger(details.availablePrimeCount));
+  lines.push(prompt + "terminal replay of divisor checks:");
+
+  if (details.checkLines.length === 0) {
+    lines.push(prompt + "no odd stored prime divisor is <= sqrt(candidate)");
   } else {
-    for (const sample of details.sampleChecks) {
-      lines.push(sample);
+    for (const line of details.checkLines) {
+      lines.push(prompt + line);
     }
   }
 
-  lines.push("highest divisor tested: " + (details.highestDivisorTested === null ? "none needed" : formatInteger(details.highestDivisorTested)));
-
-  if (details.divisor !== null) {
-    lines.push("factor found: " + formatInteger(details.divisor));
+  if (details.nextPrimeAboveLimit !== null) {
+    lines.push(
+      prompt
+        + "next stored prime "
+        + formatInteger(details.nextPrimeAboveLimit)
+        + " is above sqrt(candidate), so the scan stops",
+    );
+  } else if (details.checks === 0) {
+    lines.push(prompt + "sqrt(candidate) is below 3, so the scan stops immediately");
   }
 
-  lines.push("stop reason: " + details.stopReason);
-  lines.push("");
-  lines.push("result: " + details.verdict);
+  lines.push(
+    prompt
+      + "highest divisor tested: "
+      + (details.highestDivisorTested === null ? "none" : formatInteger(details.highestDivisorTested)),
+  );
+  lines.push(prompt + "total divisor checks: " + formatInteger(details.checks));
+  lines.push(prompt + "verdict: PRIME");
+  lines.push(prompt + formatInteger(details.candidate) + " enters the prime feed");
 
   return lines.join("\\n");
 }
@@ -269,17 +284,7 @@ function createState() {
     pendingPrimeLabels: [],
     resetPrimeLog: true,
     mathVerdict: "PRIME",
-    mathText: buildMathText({
-      candidate: 3,
-      limit: Math.sqrt(3),
-      availablePrimeCount: 1,
-      checks: 0,
-      sampleChecks: [],
-      highestDivisorTested: null,
-      divisor: null,
-      stopReason: "sqrt(3) = 1.73, so the scanner can already mark 3 as prime.",
-      verdict: "PRIME",
-    }),
+    mathText: INITIAL_PROOF_TEXT,
   };
 }
 
@@ -376,17 +381,9 @@ function importState(data, reportIntervalMs) {
   state.mathVerdict = typeof data.mathVerdict === "string" ? data.mathVerdict : "PRIME";
   state.mathText = typeof data.mathText === "string" && data.mathText.trim()
     ? data.mathText
-    : buildMathText({
-      candidate: candidate,
-      limit: Math.sqrt(candidate),
-      availablePrimeCount: primes.length,
-      checks: 0,
-      sampleChecks: [],
-      highestDivisorTested: null,
-      divisor: null,
-      stopReason: "Save loaded. Prime scan resumed.",
-      verdict: state.mathVerdict,
-    });
+    : candidate > 2
+      ? analyzeCandidate(lastPrime).text
+      : INITIAL_PROOF_TEXT;
   ensureLoop();
   postSnapshot(now);
 }
@@ -478,40 +475,37 @@ function updateCalcSpeed(now) {
 
 function analyzeCandidate(candidate) {
   const limit = Math.sqrt(candidate);
-  const sampleChecks = [];
+  const checkLines = [];
   let checks = 0;
   let highestDivisorTested = null;
   let divisor = null;
-  let stopReason = "";
+  let nextPrimeAboveLimit = null;
 
   for (let index = 1; index < state.primes.length; index += 1) {
     const prime = state.primes[index];
 
     if (prime > limit) {
-      stopReason = "The next stored prime, " + formatInteger(prime) + ", is above sqrt(" + formatInteger(candidate) + "), so no divisor can still fit.";
+      nextPrimeAboveLimit = prime;
       break;
     }
 
     const remainder = candidate % prime;
     checks += 1;
     highestDivisorTested = prime;
-
-    if (sampleChecks.length < MAX_TRACE_SAMPLES || remainder === 0) {
-      sampleChecks.push("  " + formatInteger(prime) + " -> " + formatInteger(candidate) + " mod " + formatInteger(prime) + " = " + formatInteger(remainder));
-    }
+    checkLines.push(
+      "check "
+        + String(checks).padStart(3, "0")
+        + " | "
+        + formatInteger(candidate)
+        + " mod "
+        + formatInteger(prime)
+        + " = "
+        + formatInteger(remainder),
+    );
 
     if (remainder === 0) {
       divisor = prime;
-      stopReason = formatInteger(prime) + " divides " + formatInteger(candidate) + " evenly, so the candidate is composite.";
       break;
-    }
-  }
-
-  if (!stopReason) {
-    if (checks === 0) {
-      stopReason = "sqrt(" + formatInteger(candidate) + ") = " + formatDecimal(limit) + ", so the scanner can already mark " + formatInteger(candidate) + " as prime.";
-    } else {
-      stopReason = "No stored prime divisor up to sqrt(" + formatInteger(candidate) + ") worked, so the candidate is prime.";
     }
   }
 
@@ -520,17 +514,17 @@ function analyzeCandidate(candidate) {
   return {
     isPrime: divisor === null,
     verdict: verdict,
-    text: buildMathText({
-      candidate: candidate,
-      limit: limit,
-      availablePrimeCount: state.primes.length,
-      checks: checks,
-      sampleChecks: sampleChecks,
-      highestDivisorTested: highestDivisorTested,
-      divisor: divisor,
-      stopReason: stopReason,
-      verdict: verdict,
-    }),
+    text: divisor === null
+      ? buildPrimeProofText({
+        candidate: candidate,
+        limit: limit,
+        availablePrimeCount: state.primes.length,
+        checks: checks,
+        checkLines: checkLines,
+        highestDivisorTested: highestDivisorTested,
+        nextPrimeAboveLimit: nextPrimeAboveLimit,
+      })
+      : "",
   };
 }
 
@@ -546,8 +540,6 @@ function processWorkCycle() {
     const analysis = analyzeCandidate(candidate);
 
     state.testedCount += 1;
-    state.mathVerdict = analysis.verdict;
-    state.mathText = analysis.text;
 
     if (analysis.isPrime) {
       state.primes.push(candidate);
@@ -566,6 +558,8 @@ function processWorkCycle() {
         state.pendingPrimeLabels = state.pendingPrimeLabels.slice(-MAX_PENDING_PRIMES);
       }
 
+      state.mathVerdict = analysis.verdict;
+      state.mathText = analysis.text;
       primesFound += 1;
     }
 
@@ -813,6 +807,58 @@ function buildPrimeFeedText(labels, columns) {
   return rows.join("\n");
 }
 
+function getMathTypingCharsPerSecond(text) {
+  const charsPerSecond = (Math.max(text.length, 1) * 1000) / MATH_TYPING_TARGET_DURATION_MS;
+  return Math.min(MATH_TYPING_MAX_CHARS_PER_SEC, Math.max(MATH_TYPING_MIN_CHARS_PER_SEC, charsPerSecond));
+}
+
+function setMathTextInstant(text) {
+  state.mathText = text;
+  state.mathTypingStartedAt = 0;
+  state.mathTypingCharsPerSecond = 0;
+}
+
+function queueMathTextTyping(text, now = performance.now()) {
+  if (text === state.mathText) {
+    return;
+  }
+
+  state.mathText = text;
+  state.mathTypingStartedAt = now;
+  state.mathTypingCharsPerSecond = getMathTypingCharsPerSecond(text);
+}
+
+function renderMathLog(now) {
+  if (!elements.mathLog) {
+    return;
+  }
+
+  if (!state.mathTypingStartedAt) {
+    setText(elements.mathLog, state.mathText);
+    elements.mathLog.scrollTop = elements.mathLog.scrollHeight;
+    return;
+  }
+
+  const elapsed = Math.max(0, now - state.mathTypingStartedAt);
+  const visibleCharacters = Math.min(
+    state.mathText.length,
+    Math.floor((elapsed / 1000) * state.mathTypingCharsPerSecond),
+  );
+  const typingComplete = visibleCharacters >= state.mathText.length;
+  const showCursor = !typingComplete && Math.floor(now / MATH_TYPING_CURSOR_BLINK_MS) % 2 === 0;
+  const displayText = typingComplete
+    ? state.mathText
+    : state.mathText.slice(0, visibleCharacters) + (showCursor ? "_" : "");
+
+  if (typingComplete) {
+    state.mathTypingStartedAt = 0;
+    state.mathTypingCharsPerSecond = 0;
+  }
+
+  setText(elements.mathLog, displayText);
+  elements.mathLog.scrollTop = elements.mathLog.scrollHeight;
+}
+
 function showWelcomeScreen() {
   if (elements.welcomeScreen) {
     elements.welcomeScreen.hidden = false;
@@ -1034,7 +1080,7 @@ function loadSaveData(saveData) {
   state.primeSpeed = 0;
   state.averagePrimeGap = saveData.averagePrimeGap;
   state.mathVerdict = saveData.mathVerdict;
-  state.mathText = saveData.mathText;
+  setMathTextInstant(saveData.mathText);
   state.displayedPrimeLog = saveData.primeFeedNumbers.map((prime) => formatInteger(prime));
   state.primeLogText = buildPrimeFeedText(state.displayedPrimeLog, state.primeLogColumns);
   state.primeLogDirty = true;
@@ -1272,7 +1318,7 @@ function resetDisplayState() {
   state.primeLogText = buildPrimeFeedText(state.displayedPrimeLog, state.primeLogColumns);
   state.primeLogDirty = true;
   state.mathVerdict = "PRIME";
-  state.mathText = INITIAL_MATH_TEXT;
+  setMathTextInstant(INITIAL_MATH_TEXT);
 }
 
 function appendPrimeLabels(labels) {
@@ -1302,7 +1348,10 @@ function applyWorkerSnapshot(snapshot) {
   state.averagePrimeGap = snapshot.averagePrimeGap;
   state.actualMathBudgetMs = snapshot.actualMathBudgetMs;
   state.mathVerdict = snapshot.mathVerdict;
-  state.mathText = snapshot.mathText;
+
+  if (typeof snapshot.mathText === "string" && snapshot.mathText.trim() && snapshot.mathText !== state.mathText) {
+    queueMathTextTyping(snapshot.mathText, performance.now());
+  }
 
   if (snapshot.resetPrimeLog) {
     state.displayedPrimeLog = Array.isArray(snapshot.primeFeedLabels) && snapshot.primeFeedLabels.length > 0
@@ -1362,7 +1411,7 @@ function render(now = performance.now(), force = false) {
   setText(elements.primeGapAverage, formatRate(state.averagePrimeGap));
   setText(elements.uptime, formatUptime(state.runtimeMs));
   setText(elements.mathVerdict, state.mathVerdict);
-  setText(elements.mathLog, state.mathText);
+  renderMathLog(now);
   setText(elements.pauseToggle, state.running ? "Pause" : "Start");
 
   if (state.primeLogDirty) {
@@ -1438,10 +1487,10 @@ primeWorker.addEventListener("error", () => {
   state.workerError = true;
   state.running = false;
   state.mathVerdict = "ERROR";
-  state.mathText = [
+  setMathTextInstant([
     "Background worker failed to start.",
     "Refresh the page to try again.",
-  ].join("\n");
+  ].join("\n"));
   render(performance.now(), true);
 });
 
