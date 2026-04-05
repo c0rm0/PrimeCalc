@@ -1,5 +1,6 @@
 const UI_RENDER_INTERVAL_MS = 1000 / 16;
 const FPS_RATE_WINDOW_MS = 5000;
+const MAX_PACE_WINDOW_MS = 10000;
 const ANIMATION_FALLBACK_DELAY_MS = 50;
 const MAX_LOGGED_PRIMES = 5000;
 const WORKER_REPORT_INTERVAL_VISIBLE_MS = 1000 / 16;
@@ -100,6 +101,8 @@ const activeCatCleanupIds = new Set();
 
 const workerSource = `
 const PRIME_RATE_WINDOW_MS = 5000;
+const MAX_PACE_WINDOW_MS = ${MAX_PACE_WINDOW_MS};
+const MAX_PACE_BUCKET_MS = 250;
 const CALC_SAMPLE_INTERVAL_MS = 250;
 const DEFAULT_BUDGET_MS = ${DEFAULT_MATH_BUDGET_MS};
 const DEFAULT_REPORT_INTERVAL_MS = 1000 / 16;
@@ -208,8 +211,7 @@ function createState() {
     primeSpeed: 0,
     averagePrimeGap: 0,
     actualMathBudgetMs: 0,
-    spentMathSinceReportMs: 0,
-    workCyclesSinceReport: 0,
+    mathPaceBuckets: [],
     primeRateBuckets: [],
     primes: [2],
     recentPrimeWindow: [2],
@@ -336,6 +338,53 @@ function prunePrimeRateBuckets(now) {
   while (state.primeRateBuckets.length > 0 && now - state.primeRateBuckets[0].time > PRIME_RATE_WINDOW_MS) {
     state.primeRateBuckets.shift();
   }
+}
+
+function pruneMathPaceBuckets(now) {
+  while (state.mathPaceBuckets.length > 0 && now - state.mathPaceBuckets[0].time > MAX_PACE_WINDOW_MS) {
+    state.mathPaceBuckets.shift();
+  }
+}
+
+function recordMathPace(now, spentMs) {
+  if (!(spentMs > 0)) {
+    return;
+  }
+
+  const lastBucket = state.mathPaceBuckets[state.mathPaceBuckets.length - 1];
+
+  if (lastBucket && now - lastBucket.time < MAX_PACE_BUCKET_MS) {
+    lastBucket.time = now;
+    lastBucket.spentMs += spentMs;
+    lastBucket.cycles += 1;
+  } else {
+    state.mathPaceBuckets.push({
+      time: now,
+      spentMs: spentMs,
+      cycles: 1,
+    });
+  }
+
+  pruneMathPaceBuckets(now);
+}
+
+function updateActualMathBudget(now) {
+  pruneMathPaceBuckets(now);
+
+  if (state.mathPaceBuckets.length === 0) {
+    state.actualMathBudgetMs = 0;
+    return;
+  }
+
+  let spentTotal = 0;
+  let cycleTotal = 0;
+
+  for (const bucket of state.mathPaceBuckets) {
+    spentTotal += bucket.spentMs;
+    cycleTotal += bucket.cycles;
+  }
+
+  state.actualMathBudgetMs = cycleTotal > 0 ? spentTotal / cycleTotal : 0;
 }
 
 function updatePrimeSpeed(now) {
@@ -486,9 +535,7 @@ function processWorkCycle() {
 
 function postSnapshot(now) {
   state.lastReportTime = now;
-  state.actualMathBudgetMs = state.workCyclesSinceReport > 0
-    ? state.spentMathSinceReportMs / state.workCyclesSinceReport
-    : 0;
+  updateActualMathBudget(now);
 
   self.postMessage({
     type: "snapshot",
@@ -513,8 +560,6 @@ function postSnapshot(now) {
 
   state.pendingPrimeLabels = [];
   state.resetPrimeLog = false;
-  state.spentMathSinceReportMs = 0;
-  state.workCyclesSinceReport = 0;
 }
 
 function scheduleTick(delay) {
@@ -539,9 +584,9 @@ function tick() {
   let loopNow = tickStarted;
 
   if (state.running) {
-    state.spentMathSinceReportMs += processWorkCycle();
-    state.workCyclesSinceReport += 1;
+    const spentThisCycle = processWorkCycle();
     loopNow = performance.now();
+    recordMathPace(loopNow, spentThisCycle);
     state.runtimeMs += elapsed + Math.max(0, loopNow - tickStarted);
     state.lastTickTime = loopNow;
   } else {
@@ -550,6 +595,7 @@ function tick() {
 
   updateCalcSpeed(loopNow);
   updatePrimeSpeed(loopNow);
+  updateActualMathBudget(loopNow);
 
   if (loopNow - state.lastReportTime >= state.reportIntervalMs) {
     postSnapshot(loopNow);
@@ -994,7 +1040,7 @@ function updateOverclockReadout() {
   if (state.overclockMode === "max") {
     setText(
       elements.overclockValue,
-      "Max pace: "
+      "Max pace avg (10s): "
         + formatBudget(state.actualMathBudgetMs)
         + " ms / cycle",
     );
@@ -1005,7 +1051,7 @@ function updateOverclockReadout() {
     elements.overclockValue,
     "Manual pace: "
       + formatBudget(state.mathBudgetMs)
-      + " ms / cycle | actual "
+      + " ms / cycle | actual avg (10s) "
       + formatBudget(state.actualMathBudgetMs)
       + " ms",
   );

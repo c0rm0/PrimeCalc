@@ -32,14 +32,14 @@
             <button class="speed-option speed-option--max" type="button" data-speed-mode="max">Max</button>
           </div>
           <div class="control-readout">
-            <span id="overclock-value">Manual pace: 1.0000 ms / cycle | actual 0.0000 ms</span>
+            <span id="overclock-value">Manual pace: 1.0000 ms / cycle | actual avg (10s) 0.0000 ms</span>
             <button id="pause-toggle" class="control-button" type="button">Pause</button>
             <button id="save-button" class="control-button" type="button">Save</button>
             <button id="load-button" class="control-button" type="button">Load</button>
             <button id="reset-button" class="control-button control-button--ghost" type="button">Reset</button>
             <input id="load-input" type="file" accept=".json,application/json" hidden>
           </div>
-          <p class="control-hint">Manual mode shows your selected worker-cycle pace and the real math time in use. Max mode tells the worker to keep crunching prime math as fast as it can.</p>
+          <p class="control-hint">Manual mode shows your selected worker-cycle pace and a rolling 10-second average of the real math time in use. Max mode tells the worker to keep crunching prime math as fast as it can and shows the same 10-second average.</p>
         </div>
       </div>
     </header>
