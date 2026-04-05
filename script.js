@@ -11,10 +11,11 @@ const SAVE_FILE_FORMAT = "PrimeCalcSave";
 const SAVE_FILE_VERSION = 1;
 const EXPORT_REQUEST_TIMEOUT_MS = 15000;
 const SPIN_CAT_PLAY_DURATION_MS = 3090;
-const CAT_SPAWN_INTERVAL_MS = 3000;
+const CAT_SPAWN_MIN_INTERVAL_MS = 3000;
+const CAT_SPAWN_MAX_INTERVAL_MS = 6000;
 const CAT_MIN_SIZE_PX = 28;
 const CAT_MAX_SIZE_PX = 90;
-const CAT_SOURCE = "spincat.gif";
+const CAT_SOURCES = ["spincat.gif", "lizard.gif"];
 
 const integerFormatter = new Intl.NumberFormat("en-US");
 const rateFormatter = new Intl.NumberFormat("en-US", {
@@ -96,6 +97,7 @@ let pendingAnimationFrameId = 0;
 let pendingAnimationFallbackId = 0;
 let pendingCatSpawnId = 0;
 let nextFloatingCatId = 0;
+let lastFloatingCatSourceIndex = -1;
 let pendingExportRequest = null;
 const activeCatCleanupIds = new Set();
 
@@ -972,6 +974,21 @@ function getRandomCatSize() {
   return Math.round(randomBetween(minSize, maxSize));
 }
 
+function getNextFloatingCatSource() {
+  if (CAT_SOURCES.length === 0) {
+    return null;
+  }
+
+  let sourceIndex = Math.floor(Math.random() * CAT_SOURCES.length);
+
+  if (CAT_SOURCES.length > 1 && sourceIndex === lastFloatingCatSourceIndex) {
+    sourceIndex = (sourceIndex + 1) % CAT_SOURCES.length;
+  }
+
+  lastFloatingCatSourceIndex = sourceIndex;
+  return CAT_SOURCES[sourceIndex];
+}
+
 function spawnFloatingCat() {
   if (!elements.catOverlay || document.visibilityState === "hidden") {
     return;
@@ -982,7 +999,13 @@ function spawnFloatingCat() {
   const margin = 8;
   const maxLeft = Math.max(margin, window.innerWidth - size - margin);
   const maxTop = Math.max(margin, window.innerHeight - size - margin);
-  const catUrl = new URL(CAT_SOURCE, window.location.href);
+  const catSource = getNextFloatingCatSource();
+
+  if (!catSource) {
+    return;
+  }
+
+  const catUrl = new URL(catSource, window.location.href);
 
   nextFloatingCatId += 1;
   catUrl.searchParams.set("spawn", String(nextFloatingCatId));
@@ -1020,7 +1043,7 @@ function scheduleNextFloatingCat() {
     pendingCatSpawnId = 0;
     spawnFloatingCat();
     scheduleNextFloatingCat();
-  }, CAT_SPAWN_INTERVAL_MS);
+  }, Math.round(randomBetween(CAT_SPAWN_MIN_INTERVAL_MS, CAT_SPAWN_MAX_INTERVAL_MS)));
 }
 
 function updateOverclockButtons() {

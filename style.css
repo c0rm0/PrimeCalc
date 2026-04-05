@@ -285,15 +285,15 @@ h1 {
   gap: 18px;
 }
 
-.latest-prime-window {
-  grid-column: span 12;
+.feature-window {
+  grid-column: span 6;
 }
 
 .window--feature .window__body {
   padding: 14px 18px;
 }
 
-.latest-prime-box {
+.feature-value-box {
   width: 100%;
   min-height: 84px;
   display: grid;
@@ -490,7 +490,7 @@ input:focus-visible {
     width: 100%;
   }
 
-  .latest-prime-box {
+  .feature-value-box {
     font-size: clamp(2rem, 10vw, 4rem);
     letter-spacing: 0.08em;
   }
@@ -526,7 +526,7 @@ input:focus-visible {
   }
 
   .stat-window,
-  .latest-prime-window,
+  .feature-window,
   .math-window,
   .prime-log-window {
     grid-column: span 12;
@@ -538,7 +538,7 @@ input:focus-visible {
     letter-spacing: 0.06em;
   }
 
-  .latest-prime-box {
+  .feature-value-box {
     min-height: 64px;
     padding: 8px 10px;
     font-size: clamp(1.85rem, 13vw, 3.5rem);

@@ -45,7 +45,7 @@
     </header>
 
     <section class="dashboard-grid" aria-label="Prime calculation dashboard">
-      <article class="window window--feature latest-prime-window">
+      <article class="window window--feature feature-window latest-prime-window">
         <div class="window__header">
           <span class="window__title">Last Prime Calculated</span>
           <span class="window__meta" id="system-status">RUNNING</span>
@@ -53,10 +53,25 @@
         <div class="window__body">
           <div
             id="latest-prime"
-            class="latest-prime-box"
+            class="feature-value-box"
             aria-label="Last prime calculated"
             aria-live="polite"
           >2</div>
+        </div>
+      </article>
+
+      <article class="window window--feature feature-window prime-count-window">
+        <div class="window__header">
+          <span class="window__title">Prime Count</span>
+          <span class="window__meta">TOTAL FOUND</span>
+        </div>
+        <div class="window__body">
+          <div
+            id="prime-count"
+            class="feature-value-box"
+            aria-label="Prime count"
+            aria-live="polite"
+          >1</div>
         </div>
       </article>
 
@@ -77,16 +92,6 @@
         <div class="window__body">
           <p class="stat-value" id="fps-counter">0</p>
           <p class="stat-label">avg frames / second over last 5s</p>
-        </div>
-      </article>
-
-      <article class="window stat-window">
-        <div class="window__header">
-          <span class="window__title">Prime Count</span>
-        </div>
-        <div class="window__body">
-          <p class="stat-value" id="prime-count">1</p>
-          <p class="stat-label">prime numbers found</p>
         </div>
       </article>
 
