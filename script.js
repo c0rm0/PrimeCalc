@@ -106,7 +106,7 @@ const state = {
   pendingMathProof: null,
   mathTypingStartedAt: 0,
   mathTypingTimeline: [],
-  lastUiRenderTime: 0,
+  lastDashboardRenderTime: 0,
 };
 
 let pendingAnimationFrameId = 0;
@@ -1496,39 +1496,40 @@ function recordFrame(now) {
 }
 
 function render(now = performance.now(), force = false) {
-  if (!force && now - state.lastUiRenderTime < UI_RENDER_INTERVAL_MS) {
-    return;
+  const shouldRenderDashboard = force || now - state.lastDashboardRenderTime >= UI_RENDER_INTERVAL_MS;
+
+  if (shouldRenderDashboard) {
+    state.lastDashboardRenderTime = now;
+    const nextPrimeLogColumns = getPrimeFeedColumnCount();
+
+    if (nextPrimeLogColumns !== state.primeLogColumns) {
+      state.primeLogColumns = nextPrimeLogColumns;
+      state.primeLogDirty = true;
+    }
+
+    updateOverclockReadout();
+    setText(elements.systemStatus, state.workerError ? "WORKER ERROR" : (state.running ? "RUNNING" : "PAUSED"));
+    setText(elements.latestPrime, formatInteger(state.lastPrime));
+    setText(elements.calcSpeed, formatRate(state.calcSpeed));
+    setText(elements.fpsCounter, formatRate(state.fps));
+    setText(elements.primeCount, formatInteger(state.totalPrimeCount));
+    setText(elements.primeSpeed, formatRate(state.primeSpeed));
+    setText(elements.currentCandidate, formatInteger(state.candidate));
+    setText(elements.testedCount, formatInteger(state.testedCount));
+    setText(elements.primeGapAverage, formatRate(state.averagePrimeGap));
+    setText(elements.uptime, formatUptime(state.runtimeMs));
+    setText(elements.pauseToggle, state.running ? "Pause" : "Start");
+
+    if (state.primeLogDirty) {
+      state.primeLogText = buildPrimeFeedText(state.displayedPrimeLog, state.primeLogColumns);
+      setText(elements.primeLog, state.primeLogText);
+      elements.primeLog.scrollTop = elements.primeLog.scrollHeight;
+      state.primeLogDirty = false;
+    }
   }
 
-  state.lastUiRenderTime = now;
-  const nextPrimeLogColumns = getPrimeFeedColumnCount();
-
-  if (nextPrimeLogColumns !== state.primeLogColumns) {
-    state.primeLogColumns = nextPrimeLogColumns;
-    state.primeLogDirty = true;
-  }
-
-  updateOverclockReadout();
-  setText(elements.systemStatus, state.workerError ? "WORKER ERROR" : (state.running ? "RUNNING" : "PAUSED"));
-  setText(elements.latestPrime, formatInteger(state.lastPrime));
-  setText(elements.calcSpeed, formatRate(state.calcSpeed));
-  setText(elements.fpsCounter, formatRate(state.fps));
-  setText(elements.primeCount, formatInteger(state.totalPrimeCount));
-  setText(elements.primeSpeed, formatRate(state.primeSpeed));
-  setText(elements.currentCandidate, formatInteger(state.candidate));
-  setText(elements.testedCount, formatInteger(state.testedCount));
-  setText(elements.primeGapAverage, formatRate(state.averagePrimeGap));
-  setText(elements.uptime, formatUptime(state.runtimeMs));
   setText(elements.mathVerdict, state.mathVerdict);
   renderMathLog(now);
-  setText(elements.pauseToggle, state.running ? "Pause" : "Start");
-
-  if (state.primeLogDirty) {
-    state.primeLogText = buildPrimeFeedText(state.displayedPrimeLog, state.primeLogColumns);
-    setText(elements.primeLog, state.primeLogText);
-    elements.primeLog.scrollTop = elements.primeLog.scrollHeight;
-    state.primeLogDirty = false;
-  }
 }
 
 function onAnimationFallback() {
