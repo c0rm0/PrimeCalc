@@ -32,18 +32,18 @@ const budgetFormatter = new Intl.NumberFormat("en-US", {
   minimumFractionDigits: 4,
   maximumFractionDigits: 4,
 });
-const MATH_TYPING_BASE_DELAY_MS = 34;
-const MATH_TYPING_DELAY_JITTER_MS = 18;
-const MATH_TYPING_MIN_DELAY_MS = 8;
-const MATH_TYPING_WORD_BURST_MIN = 3;
-const MATH_TYPING_WORD_BURST_MAX = 10;
-const MATH_TYPING_BURST_MIN_MULTIPLIER = 0.72;
-const MATH_TYPING_BURST_MAX_MULTIPLIER = 1.42;
-const MATH_TYPING_SPACE_MULTIPLIER = 0.42;
-const MATH_TYPING_NUMBER_MULTIPLIER = 0.88;
-const MATH_TYPING_SYMBOL_MULTIPLIER = 1.08;
-const MATH_TYPING_PUNCTUATION_PAUSE_MS = 90;
-const MATH_TYPING_LINE_BREAK_PAUSE_MS = 180;
+const MATH_TYPING_BASE_DELAY_MS = 52;
+const MATH_TYPING_DELAY_JITTER_MS = 22;
+const MATH_TYPING_MIN_DELAY_MS = 14;
+const MATH_TYPING_WORD_BURST_MIN = 2;
+const MATH_TYPING_WORD_BURST_MAX = 6;
+const MATH_TYPING_BURST_MIN_MULTIPLIER = 0.78;
+const MATH_TYPING_BURST_MAX_MULTIPLIER = 1.35;
+const MATH_TYPING_SPACE_MULTIPLIER = 0.55;
+const MATH_TYPING_NUMBER_MULTIPLIER = 0.95;
+const MATH_TYPING_SYMBOL_MULTIPLIER = 1.12;
+const MATH_TYPING_PUNCTUATION_PAUSE_MS = 120;
+const MATH_TYPING_LINE_BREAK_PAUSE_MS = 260;
 const MATH_TYPING_CURSOR_BLINK_MS = 280;
 
 const elements = {
@@ -102,6 +102,8 @@ const state = {
   primeLogDirty: true,
   mathVerdict: "PRIME",
   mathText: INITIAL_MATH_TEXT,
+  mathProofPrime: 0,
+  pendingMathProof: null,
   mathTypingStartedAt: 0,
   mathTypingTimeline: [],
   lastUiRenderTime: 0,
@@ -292,6 +294,7 @@ function createState() {
     totalPrimeCount: 1,
     pendingPrimeLabels: [],
     resetPrimeLog: true,
+    mathPrime: 0,
     mathVerdict: "PRIME",
     mathText: INITIAL_PROOF_TEXT,
   };
@@ -313,6 +316,7 @@ function buildSaveData() {
     totalPrimeCount: state.totalPrimeCount,
     lastPrime: state.lastPrime,
     candidate: state.candidate,
+    mathPrime: state.mathPrime,
     mathVerdict: state.mathVerdict,
     mathText: state.mathText,
     averagePrimeGap: state.averagePrimeGap,
@@ -387,6 +391,13 @@ function importState(data, reportIntervalMs) {
     : [];
   state.pendingPrimeLabels = [];
   state.resetPrimeLog = true;
+  state.mathPrime = Math.max(
+    0,
+    Math.round(
+      Number(data.mathPrime)
+      || (typeof data.mathText === "string" && data.mathText.trim() && data.mathText !== INITIAL_PROOF_TEXT ? lastPrime : 0),
+    ),
+  );
   state.mathVerdict = typeof data.mathVerdict === "string" ? data.mathVerdict : "PRIME";
   state.mathText = typeof data.mathText === "string" && data.mathText.trim()
     ? data.mathText
@@ -567,6 +578,7 @@ function processWorkCycle() {
         state.pendingPrimeLabels = state.pendingPrimeLabels.slice(-MAX_PENDING_PRIMES);
       }
 
+      state.mathPrime = candidate;
       state.mathVerdict = analysis.verdict;
       state.mathText = analysis.text;
       primesFound += 1;
@@ -609,6 +621,7 @@ function postSnapshot(now) {
     primeSpeed: state.primeSpeed,
     averagePrimeGap: state.averagePrimeGap,
     actualMathBudgetMs: state.actualMathBudgetMs,
+    mathPrime: state.mathPrime,
     mathVerdict: state.mathVerdict,
     mathText: state.mathText,
     primeFeedLabels: state.resetPrimeLog
@@ -872,25 +885,63 @@ function getTypedCharacterCount(timeline, elapsed) {
   return low;
 }
 
-function setMathTextInstant(text) {
+function setMathTextInstant(text, proofPrime = 0, verdict = "PRIME") {
   state.mathText = text;
+  state.mathProofPrime = Math.max(0, Math.round(Number(proofPrime) || 0));
+  state.mathVerdict = verdict;
+  state.pendingMathProof = null;
   state.mathTypingStartedAt = 0;
   state.mathTypingTimeline = [];
 }
 
-function queueMathTextTyping(text, now = performance.now()) {
-  if (text === state.mathText) {
+function startMathProofTyping(proof, now = performance.now()) {
+  state.mathProofPrime = proof.prime;
+  state.mathVerdict = proof.verdict;
+  state.mathText = proof.text;
+  state.mathTypingStartedAt = now;
+  state.mathTypingTimeline = getMathTypingTimeline(proof.text);
+}
+
+function queueMathProof(proofPrime, text, verdict = "PRIME", now = performance.now()) {
+  if (typeof text !== "string" || !text.trim()) {
     return;
   }
 
-  state.mathText = text;
-  state.mathTypingStartedAt = now;
-  state.mathTypingTimeline = getMathTypingTimeline(text);
+  const normalizedPrime = Math.max(0, Math.round(Number(proofPrime) || 0));
+
+  if (normalizedPrime <= 0) {
+    return;
+  }
+
+  if (normalizedPrime === state.mathProofPrime && text === state.mathText) {
+    return;
+  }
+
+  const proof = {
+    prime: normalizedPrime,
+    text: text,
+    verdict: verdict,
+  };
+
+  if (!state.mathTypingStartedAt && normalizedPrime !== state.mathProofPrime) {
+    startMathProofTyping(proof, now);
+    return;
+  }
+
+  if (!state.pendingMathProof || normalizedPrime >= state.pendingMathProof.prime) {
+    state.pendingMathProof = proof;
+  }
 }
 
 function renderMathLog(now) {
   if (!elements.mathLog) {
     return;
+  }
+
+  if (!state.mathTypingStartedAt && state.pendingMathProof && state.pendingMathProof.prime !== state.mathProofPrime) {
+    const nextProof = state.pendingMathProof;
+    state.pendingMathProof = null;
+    startMathProofTyping(nextProof, now);
   }
 
   if (!state.mathTypingStartedAt) {
@@ -1109,6 +1160,13 @@ function normalizeSaveData(rawData) {
     totalPrimeCount: totalPrimeCount,
     lastPrime: lastPrime,
     candidate: candidate,
+    mathPrime: Math.max(
+      0,
+      Math.round(
+        Number(rawData.mathPrime)
+        || (typeof rawData.mathText === "string" && rawData.mathText.trim() && rawData.mathText !== INITIAL_MATH_TEXT ? lastPrime : 0),
+      ),
+    ),
     mathVerdict: typeof rawData.mathVerdict === "string" ? rawData.mathVerdict : "PRIME",
     mathText: typeof rawData.mathText === "string" ? rawData.mathText : INITIAL_MATH_TEXT,
     averagePrimeGap: Number.isFinite(Number(rawData.averagePrimeGap)) ? Number(rawData.averagePrimeGap) : 0,
@@ -1136,8 +1194,7 @@ function loadSaveData(saveData) {
   state.calcSpeed = 0;
   state.primeSpeed = 0;
   state.averagePrimeGap = saveData.averagePrimeGap;
-  state.mathVerdict = saveData.mathVerdict;
-  setMathTextInstant(saveData.mathText);
+  setMathTextInstant(saveData.mathText, saveData.mathPrime, saveData.mathVerdict);
   state.displayedPrimeLog = saveData.primeFeedNumbers.map((prime) => formatInteger(prime));
   state.primeLogText = buildPrimeFeedText(state.displayedPrimeLog, state.primeLogColumns);
   state.primeLogDirty = true;
@@ -1374,8 +1431,7 @@ function resetDisplayState() {
   state.displayedPrimeLog = ["2"];
   state.primeLogText = buildPrimeFeedText(state.displayedPrimeLog, state.primeLogColumns);
   state.primeLogDirty = true;
-  state.mathVerdict = "PRIME";
-  setMathTextInstant(INITIAL_MATH_TEXT);
+  setMathTextInstant(INITIAL_MATH_TEXT, 0, "PRIME");
 }
 
 function appendPrimeLabels(labels) {
@@ -1404,11 +1460,7 @@ function applyWorkerSnapshot(snapshot) {
   state.primeSpeed = snapshot.primeSpeed;
   state.averagePrimeGap = snapshot.averagePrimeGap;
   state.actualMathBudgetMs = snapshot.actualMathBudgetMs;
-  state.mathVerdict = snapshot.mathVerdict;
-
-  if (typeof snapshot.mathText === "string" && snapshot.mathText.trim() && snapshot.mathText !== state.mathText) {
-    queueMathTextTyping(snapshot.mathText, performance.now());
-  }
+  queueMathProof(snapshot.mathPrime, snapshot.mathText, snapshot.mathVerdict, performance.now());
 
   if (snapshot.resetPrimeLog) {
     state.displayedPrimeLog = Array.isArray(snapshot.primeFeedLabels) && snapshot.primeFeedLabels.length > 0
@@ -1543,11 +1595,10 @@ primeWorker.addEventListener("error", () => {
 
   state.workerError = true;
   state.running = false;
-  state.mathVerdict = "ERROR";
   setMathTextInstant([
     "Background worker failed to start.",
     "Refresh the page to try again.",
-  ].join("\n"));
+  ].join("\n"), 0, "ERROR");
   render(performance.now(), true);
 });
 
