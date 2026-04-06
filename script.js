@@ -12,6 +12,7 @@ const SAVE_FILE_VERSION = 1;
 const EXPORT_REQUEST_TIMEOUT_MS = 15000;
 const SPIN_CAT_PLAY_DURATION_MS = 3090;
 const LIZARD_PLAY_DURATION_MS = 1680;
+const SQUID_PLAY_DURATION_MS = 4200;
 const CAT_SPAWN_MIN_INTERVAL_MS = 3000;
 const CAT_SPAWN_MAX_INTERVAL_MS = 6000;
 const CAT_MIN_SIZE_PX = 28;
@@ -21,6 +22,7 @@ const CAT_MAX_SPEED_PX_PER_S = 132;
 const CAT_SOURCES = [
   { src: "spincat.gif", durationMs: SPIN_CAT_PLAY_DURATION_MS },
   { src: "lizard.gif", durationMs: LIZARD_PLAY_DURATION_MS },
+  { src: "Squid.gif", durationMs: SQUID_PLAY_DURATION_MS },
 ];
 
 const integerFormatter = new Intl.NumberFormat("en-US");
