@@ -1,9 +1,9 @@
-const UI_RENDER_INTERVAL_MS = 1000 / 16;
+const UI_RENDER_INTERVAL_MS = 1000 / 20;
 const FPS_RATE_WINDOW_MS = 5000;
 const MAX_PACE_WINDOW_MS = 10000;
 const ANIMATION_FALLBACK_DELAY_MS = 50;
 const MAX_LOGGED_PRIMES = 5000;
-const WORKER_REPORT_INTERVAL_VISIBLE_MS = 1000 / 16;
+const WORKER_REPORT_INTERVAL_VISIBLE_MS = 1000 / 20;
 const WORKER_REPORT_INTERVAL_HIDDEN_MS = 1000;
 const MIN_MATH_BUDGET_MS = 0.0001;
 const DEFAULT_MATH_BUDGET_MS = 50;
@@ -32,10 +32,19 @@ const budgetFormatter = new Intl.NumberFormat("en-US", {
   minimumFractionDigits: 4,
   maximumFractionDigits: 4,
 });
-const MATH_TYPING_TARGET_DURATION_MS = 2200;
-const MATH_TYPING_MIN_CHARS_PER_SEC = 220;
-const MATH_TYPING_MAX_CHARS_PER_SEC = 6000;
-const MATH_TYPING_CURSOR_BLINK_MS = 240;
+const MATH_TYPING_BASE_DELAY_MS = 34;
+const MATH_TYPING_DELAY_JITTER_MS = 18;
+const MATH_TYPING_MIN_DELAY_MS = 8;
+const MATH_TYPING_WORD_BURST_MIN = 3;
+const MATH_TYPING_WORD_BURST_MAX = 10;
+const MATH_TYPING_BURST_MIN_MULTIPLIER = 0.72;
+const MATH_TYPING_BURST_MAX_MULTIPLIER = 1.42;
+const MATH_TYPING_SPACE_MULTIPLIER = 0.42;
+const MATH_TYPING_NUMBER_MULTIPLIER = 0.88;
+const MATH_TYPING_SYMBOL_MULTIPLIER = 1.08;
+const MATH_TYPING_PUNCTUATION_PAUSE_MS = 90;
+const MATH_TYPING_LINE_BREAK_PAUSE_MS = 180;
+const MATH_TYPING_CURSOR_BLINK_MS = 280;
 
 const elements = {
   speedButtons: Array.from(document.querySelectorAll(".speed-option")),
@@ -94,7 +103,7 @@ const state = {
   mathVerdict: "PRIME",
   mathText: INITIAL_MATH_TEXT,
   mathTypingStartedAt: 0,
-  mathTypingCharsPerSecond: 0,
+  mathTypingTimeline: [],
   lastUiRenderTime: 0,
 };
 
@@ -807,15 +816,66 @@ function buildPrimeFeedText(labels, columns) {
   return rows.join("\n");
 }
 
-function getMathTypingCharsPerSecond(text) {
-  const charsPerSecond = (Math.max(text.length, 1) * 1000) / MATH_TYPING_TARGET_DURATION_MS;
-  return Math.min(MATH_TYPING_MAX_CHARS_PER_SEC, Math.max(MATH_TYPING_MIN_CHARS_PER_SEC, charsPerSecond));
+function getMathTypingTimeline(text) {
+  const timeline = [];
+  let elapsed = 0;
+  let burstRemaining = 0;
+  let burstMultiplier = 1;
+
+  for (const character of text) {
+    if (burstRemaining <= 0) {
+      burstRemaining = Math.round(randomBetween(MATH_TYPING_WORD_BURST_MIN, MATH_TYPING_WORD_BURST_MAX));
+      burstMultiplier = randomBetween(MATH_TYPING_BURST_MIN_MULTIPLIER, MATH_TYPING_BURST_MAX_MULTIPLIER);
+    }
+
+    let delay = MATH_TYPING_BASE_DELAY_MS * burstMultiplier
+      + randomBetween(-MATH_TYPING_DELAY_JITTER_MS, MATH_TYPING_DELAY_JITTER_MS);
+
+    if (character === " ") {
+      delay *= MATH_TYPING_SPACE_MULTIPLIER;
+    } else if (/\d/.test(character)) {
+      delay *= MATH_TYPING_NUMBER_MULTIPLIER;
+    } else if (/[^A-Za-z0-9\s]/.test(character)) {
+      delay *= MATH_TYPING_SYMBOL_MULTIPLIER;
+    }
+
+    if (character === "\n") {
+      delay += MATH_TYPING_LINE_BREAK_PAUSE_MS * randomBetween(0.8, 1.2);
+      burstRemaining = 0;
+    } else if (/[.,:;=|>)]/.test(character)) {
+      delay += MATH_TYPING_PUNCTUATION_PAUSE_MS * randomBetween(0.75, 1.35);
+    }
+
+    delay = Math.max(MATH_TYPING_MIN_DELAY_MS, delay);
+    elapsed += delay;
+    timeline.push(elapsed);
+    burstRemaining -= 1;
+  }
+
+  return timeline;
+}
+
+function getTypedCharacterCount(timeline, elapsed) {
+  let low = 0;
+  let high = timeline.length;
+
+  while (low < high) {
+    const middle = Math.floor((low + high) / 2);
+
+    if (timeline[middle] <= elapsed) {
+      low = middle + 1;
+    } else {
+      high = middle;
+    }
+  }
+
+  return low;
 }
 
 function setMathTextInstant(text) {
   state.mathText = text;
   state.mathTypingStartedAt = 0;
-  state.mathTypingCharsPerSecond = 0;
+  state.mathTypingTimeline = [];
 }
 
 function queueMathTextTyping(text, now = performance.now()) {
@@ -825,7 +885,7 @@ function queueMathTextTyping(text, now = performance.now()) {
 
   state.mathText = text;
   state.mathTypingStartedAt = now;
-  state.mathTypingCharsPerSecond = getMathTypingCharsPerSecond(text);
+  state.mathTypingTimeline = getMathTypingTimeline(text);
 }
 
 function renderMathLog(now) {
@@ -840,10 +900,7 @@ function renderMathLog(now) {
   }
 
   const elapsed = Math.max(0, now - state.mathTypingStartedAt);
-  const visibleCharacters = Math.min(
-    state.mathText.length,
-    Math.floor((elapsed / 1000) * state.mathTypingCharsPerSecond),
-  );
+  const visibleCharacters = Math.min(state.mathText.length, getTypedCharacterCount(state.mathTypingTimeline, elapsed));
   const typingComplete = visibleCharacters >= state.mathText.length;
   const showCursor = !typingComplete && Math.floor(now / MATH_TYPING_CURSOR_BLINK_MS) % 2 === 0;
   const displayText = typingComplete
@@ -852,7 +909,7 @@ function renderMathLog(now) {
 
   if (typingComplete) {
     state.mathTypingStartedAt = 0;
-    state.mathTypingCharsPerSecond = 0;
+    state.mathTypingTimeline = [];
   }
 
   setText(elements.mathLog, displayText);
